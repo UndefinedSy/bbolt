@@ -124,7 +124,6 @@ type DB struct {
 	// It prevents major page faults, however used memory can't be reclaimed.
 	//
 	// Supported only on Unix via mlock/munlock syscalls.
-	// 锁住部分物理内存的地址空间，避免这段内存被 OS swap
 	Mlock bool
 
 	path     string
@@ -150,11 +149,9 @@ type DB struct {
 	batchMu sync.Mutex
 	batch   *batch
 
-	rwlock   sync.Mutex // Allows only one writer at a time.
-	metalock sync.Mutex // Protects meta page access.
-	// Protects mmap access during remapping.
-	// 用于 DB.mmap, DB.Close, BeginTransaction, RemoveTransaction
-	mmaplock sync.RWMutex
+	rwlock   sync.Mutex   // Allows only one writer at a time.
+	metalock sync.Mutex   // Protects meta page access.
+	mmaplock sync.RWMutex // Protects mmap access during remapping.
 	statlock sync.RWMutex // Protects stats access.
 
 	ops struct {
@@ -339,32 +336,30 @@ func (db *DB) mmap(minsz int) error {
 	db.mmaplock.Lock()
 	defer db.mmaplock.Unlock()
 
-	// 获取 mmap 对应文件大小
-	// info, err := db.file.Stat()
-	// if err != nil {
-	// 	return fmt.Errorf("mmap stat error: %s", err)
-	// } else if int(info.Size()) < db.pageSize*2 {
-	// 	return fmt.Errorf("file size too small")
-	// }
+	info, err := db.file.Stat()
+	if err != nil {
+		return fmt.Errorf("mmap stat error: %s", err)
+	} else if int(info.Size()) < db.pageSize*2 {
+		return fmt.Errorf("file size too small")
+	}
 
-	// // Ensure the size is at least the minimum size.
-	// fileSize := int(info.Size())
-	// var size = fileSize
-	// if size < minsz {
-	// 	size = minsz
-	// }
-	// size, err = db.mmapSize(size)
-	// if err != nil {
-	// 	return err
-	// }
+	// Ensure the size is at least the minimum size.
+	fileSize := int(info.Size())
+	var size = fileSize
+	if size < minsz {
+		size = minsz
+	}
+	size, err = db.mmapSize(size)
+	if err != nil {
+		return err
+	}
 
-	// 关于将物理内存的地址空间锁住避免 swap
-	// if db.Mlock {
-	// 	// Unlock db memory
-	// 	if err := db.munlock(fileSize); err != nil {
-	// 		return err
-	// 	}
-	// }
+	if db.Mlock {
+		// Unlock db memory
+		if err := db.munlock(fileSize); err != nil {
+			return err
+		}
+	}
 
 	// Dereference all mmap references before unmapping.
 	if db.rwtx != nil {
@@ -381,12 +376,12 @@ func (db *DB) mmap(minsz int) error {
 		return err
 	}
 
-	// if db.Mlock {
-	// 	// Don't allow swapping of data file
-	// 	if err := db.mlock(fileSize); err != nil {
-	// 		return err
-	// 	}
-	// }
+	if db.Mlock {
+		// Don't allow swapping of data file
+		if err := db.mlock(fileSize); err != nil {
+			return err
+		}
+	}
 
 	// Save references to the meta pages.
 	db.meta0 = db.page(0).meta()

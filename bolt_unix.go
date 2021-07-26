@@ -51,7 +51,12 @@ func funlock(db *DB) error {
 // mmap memory maps a DB's data file.
 func mmap(db *DB, sz int) error {
 	// Map the data file to memory.
-	b, err := unix.Mmap(int(db.file.Fd()), 0, sz, syscall.PROT_READ, syscall.MAP_SHARED|db.MmapFlags)
+	b, err := unix.Mmap(
+		/*fd =    */ int(db.file.Fd()),
+		/*offset =*/ 0,
+		/*length =*/ sz,
+		/*prot =  */ syscall.PROT_READ,
+		/*flags = */ syscall.MAP_SHARED|db.MmapFlags)
 	if err != nil {
 		return err
 	}
